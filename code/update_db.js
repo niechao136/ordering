@@ -65,23 +65,6 @@ function main({body, body_i}) {
 //#endregion
 //#region 处理数据库结果
 
-function parseRow(line) {
-  return String(line).trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(col => String(col).trim())
-}
-function parseMd(text) {
-  const md = String(text).replace(/(?<!\|)\n(?!\|)/g, ' ').replaceAll('\r', ' ')
-  const lines = md.split('\n')
-  const head = parseRow(lines[0])
-  const body = lines.slice(2)
-  return body.map(line => {
-    const obj = {}
-    const arr = parseRow(line)
-    head.forEach((key, index) => {
-      obj[key] = String(arr[index]).replaceAll(';', '；').replaceAll(',', '，')
-    })
-    return obj
-  })
-}
 function toMarkdownTable(arr) {
   if (!arr.length) return ''
 
@@ -95,9 +78,9 @@ function toMarkdownTable(arr) {
 
   return [headerRow, separator, ...rows].join('\n')
 }
-function main({text, text_o}) {
-  const list = parseMd(text)
-  const list_o = parseMd(text_o)
+function main({json, json_o}) {
+  const list = json[0].records
+  const list_o = json_o[0].records
   const option_by_id = {}
   list_o.forEach(o => {
     if (!option_by_id[o.product_id]) {
@@ -118,6 +101,12 @@ function main({text, text_o}) {
       obj.size_option = Object.keys(option_by_id[o.id].size_option).join('、')
       obj.temp_option = Object.keys(option_by_id[o.id].temp_option).join('、')
     }
+    Object.keys(o).forEach(k => {
+      obj[k] = String(o[k])
+        .replaceAll(';', '；')
+        .replaceAll(',', '，')
+        .replaceAll('|', '｜')
+    })
     return {
       ...o,
       ...obj,
