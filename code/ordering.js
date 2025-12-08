@@ -2,18 +2,23 @@
 //#region 处理意图识别和商品提取
 
 function handleLLM(text) {
-  const regex = /```json([\s\S]*?)```/
-  const _res = text.replaceAll(/<think>[\s\S]*?<\/think>/g, '')
+  const regex = /```json([\s\S]*?)```/;
+  const _res = text.replaceAll(/<think>[\s\S]*?<\/think>/g, '');
   const match = _res.match(regex);
-  const res = !!match ? match[1].trim() : _res
-  const str = res.replaceAll(/\/\/.*$/gm, '').replaceAll(/\/\*[\s\S]*?\*\//g, '')
-  let obj
+  const res = match ? match[1].trim() : _res;
+
+  // 更安全的注释移除，不会误删 URL 与字符串内容
+  const str = res
+    .replace(/\/\/(?!\s*http)[^\n]*/g, '')       // 去掉行注释，但保留 https://
+    .replace(/\/\*[\s\S]*?\*\//g, '');           // 块注释
+
+  let obj;
   try {
-    obj = JSON.parse(str)
+    obj = JSON.parse(str);
   } catch (e) {
-    obj = {}
+    obj = {};
   }
-  return obj
+  return obj;
 }
 function normalizeSize(size) {
   if (!size) return null
@@ -40,8 +45,10 @@ function normalizeTemperature(temp) {
 }
 function getReply(obj) {
   if (obj.need_size || obj.need_temp) {
-    const error = !!obj.size || !!obj.temp
-    let reply = `您已选择${obj.name}${!!obj.size ? '，' + obj.size : ''}${!!obj.temp ? '，' + obj.temp : ''}，但其${error ? '只' : ''}存在`
+    const size_error = !!obj.size && !obj.size_option.includes(obj.size)
+    const temp_error = !!obj.temp && !obj.temp_option.includes(obj.size)
+    const error = size_error || temp_error
+    let reply = `您已选择${obj.name}${!!obj.size && obj.size !== 'null' ? '，' + obj.size : ''}${!!obj.temp && obj.temp !== 'null' ? '，' + obj.temp : ''}，但其${error ? '只' : ''}存在`
     if (obj.need_size) {
       reply += `${obj.size_option.length}个容量选项（${obj.size_option.join('、')}），`
     }
@@ -55,7 +62,7 @@ function getReply(obj) {
   const temp = obj.temp_option.length === 1 && obj.temp_option[0] !== obj.temp ? obj.temp_option[0] : obj.temp
   const price = Number(obj.price) + Number(obj.option[size]) + Number(obj.option[temp])
   const total = price * Number(obj.qty)
-  const reply = `${obj.name}${obj.qty}杯，${obj.size}（${size === obj.size ? `可选：${obj.size_option.join('、')}` : `但其只有${size}`}），${obj.temp}（${temp === obj.temp ? `可选：${obj.temp_option.join('、')}` : `但其只有${temp}`}），价格${obj.qty * price}元；\n`
+  const reply = `${obj.name}${obj.qty}杯，${!!obj.size ? obj.size : size}（${!obj.size || size === obj.size ? `可选：${obj.size_option.join('、')}` : `但其只有${size}`}），${!!obj.temp ? obj.temp : temp}（${!obj.temp || temp === obj.temp ? `可选：${obj.temp_option.join('、')}` : `但其只有${temp}`}），价格${obj.qty * price}元；\n`
   return { total, reply }
 }
 function handleReply(history, query, intent) {
@@ -116,7 +123,7 @@ function filterProduct(history, product) {
   const item_name = {}
   add_item.forEach(o => item_name[o.name] = o)
   product.forEach(o => {
-    if (!item_name[o.product_name]) {
+    if ((!!o.product_name && o.product_name !== 'null') && !item_name[o.product_name]) {
       product_name.push(o.product_name)
     }
   })
@@ -239,7 +246,7 @@ function main({output, product, history}) {
         query_id.push(`'${obj.id}'`)
         list.push(obj)
       } else {
-        miss_item.push(o.product_name)
+        miss_item.push(!o.product_name || o.product_name === 'null' ? '' : o.product_name)
       }
     } else {
       list.push(o)
@@ -298,22 +305,24 @@ function normalizeTemperature(temp) {
 }
 function getReply(obj) {
   if (obj.need_size || obj.need_temp) {
-    const error = !!obj.size || !!obj.temp
-    let reply = `您已选择${obj.name}${!!obj.size ? '，' + obj.size : ''}${!!obj.temp ? '，' + obj.temp : ''}，但其${error ? '只' : ''}存在`
+    const size_error = !!obj.size && !obj.size_option.includes(obj.size)
+    const temp_error = !!obj.temp && !obj.temp_option.includes(obj.size)
+    const error = size_error || temp_error
+    let reply = `您已选择${obj.name}${!!obj.size && obj.size !== 'null' ? '，' + obj.size : ''}${!!obj.temp && obj.temp !== 'null' ? '，' + obj.temp : ''}，但其${error ? '只' : ''}存在`
     if (obj.need_size) {
       reply += `${obj.size_option.length}个容量选项（${obj.size_option.join('、')}），`
     }
     if (obj.need_temp) {
       reply += `${obj.temp_option.length}个温度选项（${obj.temp_option.join('、')}），`
     }
-    reply += `请${error ? '重新' : ''}选择。`
+    reply += `请${error ? '重新' : ''}选择或者取消。`
     return reply
   }
   const size = obj.size_option.length === 1 && obj.size_option[0] !== obj.size ? obj.size_option[0] : obj.size
   const temp = obj.temp_option.length === 1 && obj.temp_option[0] !== obj.temp ? obj.temp_option[0] : obj.temp
   const price = Number(obj.price) + Number(obj.option[size]) + Number(obj.option[temp])
   const total = price * Number(obj.qty)
-  const reply = `${obj.name}${obj.qty}杯，${obj.size}（${size === obj.size ? `可选：${obj.size_option.join('、')}` : `但其只有${size}`}），${obj.temp}（${temp === obj.temp ? `可选：${obj.temp_option.join('、')}` : `但其只有${temp}`}），价格${obj.qty * price}元；\n`
+  const reply = `${obj.name}${obj.qty}杯，${!!obj.size ? obj.size : size}（${!obj.size || size === obj.size ? `可选：${obj.size_option.join('、')}` : `但其只有${size}`}），${!!obj.temp ? obj.temp : temp}（${!obj.temp || temp === obj.temp ? `可选：${obj.temp_option.join('、')}` : `但其只有${temp}`}），价格${obj.qty * price}元；\n`
   return { total, reply }
 }
 function main({text, history, product, intent, miss_item}) {
@@ -604,340 +613,6 @@ function main({text, product}) {
 }
 
 //#endregion
-//#region 解析历史
-
-function normalizeSize(size) {
-  if (!size) return null
-
-  const text = String(size).trim()
-
-  if (/大|大杯/i.test(text)) return '大杯'
-  if (/中|中杯/i.test(text)) return '中杯'
-
-  return null
-}
-function normalizeTemperature(temp) {
-  if (!temp) return null
-
-  const text = String(temp).trim()
-
-  // 冰类（冰、微冰、少冰、去冰、冰凉、冷 等）
-  if (/[冰冷]/i.test(text)) return '冰的'
-
-  // 热类（热、熱、溫、温、暖 等）
-  if (/[热熱温溫暖]/i.test(text)) return '熱的'
-
-  return null
-}
-function getReply(obj) {
-  if (obj.need_size || obj.need_temp) {
-    const error = !!obj.size || !!obj.temp
-    let reply = `您已选择${obj.name}${!!obj.size ? '，' + obj.size : ''}${!!obj.temp ? '，' + obj.temp : ''}，但其${error ? '只' : ''}存在`
-    if (obj.need_size) {
-      reply += `${obj.size_option.length}个容量选项（${obj.size_option.join('、')}），`
-    }
-    if (obj.need_temp) {
-      reply += `${obj.temp_option.length}个温度选项（${obj.temp_option.join('、')}），`
-    }
-    reply += `请${error ? '重新' : ''}选择。`
-    return reply
-  }
-  const size = obj.size_option.length === 1 && obj.size_option[0] !== obj.size ? obj.size_option[0] : obj.size
-  const temp = obj.temp_option.length === 1 && obj.temp_option[0] !== obj.temp ? obj.temp_option[0] : obj.temp
-  const price = Number(obj.price) + Number(obj.option[size]) + Number(obj.option[temp])
-  const total = price * Number(obj.qty)
-  const reply = `${obj.name}${obj.qty}杯，${obj.size}（${size === obj.size ? `可选：${obj.size_option.join('、')}` : `但其只有${size}`}），${obj.temp}（${temp === obj.temp ? `可选：${obj.temp_option.join('、')}` : `但其只有${temp}`}），价格${obj.qty * price}元；\n`
-  return { total, reply }
-}
-function main({history, query}) {
-  const is_reply = !!history.reply
-  let new_reply = {
-    ...history.reply
-  }
-  let new_item = history.item.map(o => o)
-  if (is_reply) {
-    if (!new_reply.size) {
-      const size = normalizeSize(query)
-      if (!!size && new_reply.size_option.includes(size)) {
-        new_reply.size = size
-        new_reply.need_size = false
-      }
-    }
-    if (!new_reply.temp) {
-      const temp = normalizeTemperature(query)
-      if (!!temp && new_reply.temp_option.includes(temp)) {
-        new_reply.temp = temp
-        new_reply.need_temp = false
-      }
-    }
-    new_item = history.item.map(o => {
-      if (o.id !== new_reply.id) {
-        return o
-      }
-      return new_reply
-    })
-    if (!!new_reply.size && !!new_reply.temp) {
-      new_reply = new_item.find(o => o.need_size || o.need_temp) ?? null
-    }
-  }
-  const new_history = {
-    reply: new_reply,
-    item: new_item,
-  }
-  let answer = ''
-  if (is_reply) {
-    if (!!new_reply) {
-      answer += getReply(new_reply)
-    } else {
-      let total = 0, reply = ''
-      const list = new_item.map(getReply)
-      list.forEach(o => {
-        reply += o.reply
-        total += o.total
-      })
-      answer += `您已选择以下产品，总价${total}元，您可以选择结账、增改删除产品或者取消：\n`
-      answer += reply
-    }
-  }
-  const info = JSON.stringify(history.item)
-  return {
-    new_history,
-    answer,
-    is_reply,
-    info,
-  }
-}
-
-//#endregion
-//#region 处理订单操作识别
-
-function handleLLM(text) {
-  const regex = /```json([\s\S]*?)```/
-  const _res = text.replaceAll(/<think>[\s\S]*?<\/think>/g, '')
-  const match = _res.match(regex);
-  const res = !!match ? match[1].trim() : _res
-  const str = res.replaceAll(/\/\/.*$/gm, '').replaceAll(/\/\*[\s\S]*?\*\//g, '')
-  let obj
-  try {
-    obj = JSON.parse(str)
-  } catch (e) {
-    obj = {}
-  }
-  return obj
-}
-function normalizeSize(size) {
-  if (!size) return null
-
-  const text = String(size).trim()
-
-  if (/大|大杯/i.test(text)) return '大杯'
-  if (/中|中杯/i.test(text)) return '中杯'
-
-  return null
-}
-function normalizeTemperature(temp) {
-  if (!temp) return null
-
-  const text = String(temp).trim()
-
-  // 冰类（冰、微冰、少冰、去冰、冰凉、冷 等）
-  if (/[冰冷]/i.test(text)) return '冰的'
-
-  // 热类（热、熱、溫、温、暖 等）
-  if (/[热熱温溫暖]/i.test(text)) return '熱的'
-
-  return null
-}
-function getReply(obj) {
-  if (obj.need_size || obj.need_temp) {
-    const error = !!obj.size || !!obj.temp
-    let reply = `您已选择${obj.name}${!!obj.size ? '，' + obj.size : ''}${!!obj.temp ? '，' + obj.temp : ''}，但其${error ? '只' : ''}存在`
-    if (obj.need_size) {
-      reply += `${obj.size_option.length}个容量选项（${obj.size_option.join('、')}），`
-    }
-    if (obj.need_temp) {
-      reply += `${obj.temp_option.length}个温度选项（${obj.temp_option.join('、')}），`
-    }
-    reply += `请${error ? '重新' : ''}选择。`
-    return reply
-  }
-  const size = obj.size_option.length === 1 && obj.size_option[0] !== obj.size ? obj.size_option[0] : obj.size
-  const temp = obj.temp_option.length === 1 && obj.temp_option[0] !== obj.temp ? obj.temp_option[0] : obj.temp
-  const price = Number(obj.price) + Number(obj.option[size]) + Number(obj.option[temp])
-  const total = price * Number(obj.qty)
-  const reply = `${obj.name}${obj.qty}杯，${obj.size}（${size === obj.size ? `可选：${obj.size_option.join('、')}` : `但其只有${size}`}），${obj.temp}（${temp === obj.temp ? `可选：${obj.temp_option.join('、')}` : `但其只有${temp}`}），价格${obj.qty * price}元；\n`
-  return { total, reply }
-}
-function main({text, history}) {
-  const obj = handleLLM(text)
-  let intent = obj.intent || ''
-  const action = Array.isArray(obj.items) ? Array.from(obj.items) : (!!obj.items ? [obj.items] : [])
-  if (action.length > 0) {
-    intent = 'product'
-  }
-  const product = [], query_product = [], query_name = []
-  action.forEach(o => {
-    switch (o.op_type) {
-      case 'add':
-        const add_product = o?.target_item ?? o?.source_item
-        const add_in = history.item.find(o => o.name === add_product.product_name)
-        if (!add_in) {
-          query_product.push({
-            op_type: o.op_type,
-            ...add_product,
-          })
-          query_name.push(add_product.product_name)
-        }
-        product.push({
-          op_type: o.op_type,
-          ...add_product,
-        })
-        break
-      case 'delete':
-        const del_product = o?.source_item ?? o?.target_item
-        const del_in = history.item.find(o => o.name === del_product.product_name)
-        if (!del_in) {
-          query_product.push({
-            op_type: o.op_type,
-            ...del_product,
-          })
-          query_name.push(del_product.product_name)
-        }
-        product.push({
-          op_type: o.op_type,
-          ...del_product,
-        })
-        break
-      case 'update_spec':
-        const spec_product = o?.target_item ?? o?.source_item
-        const spec_in = history.item.find(o => o.name === spec_product.product_name)
-        if (!spec_in) {
-          query_product.push({
-            op_type: o.op_type,
-            ...spec_product,
-          })
-          query_name.push(spec_product.product_name)
-        }
-        product.push({
-          op_type: o.op_type,
-          ...spec_product,
-        })
-        break
-      case 'update_qty':
-        const qty_product = o?.target_item ?? o?.source_item
-        const qty_in = history.item.find(o => o.name === qty_product.product_name)
-        if (!qty_in) {
-          query_product.push({
-            op_type: o.op_type,
-            ...qty_product,
-          })
-          query_name.push(qty_product.product_name)
-        }
-        product.push({
-          op_type: o.op_type,
-          ...qty_product,
-        })
-        break
-      case 'replace_product':
-        const source_product = o?.source_item
-        const source_in = history.item.find(o => o.name === source_product.product_name)
-        const target_product = o?.target_item
-        const target_in = history.item.find(o => o.name === target_product.product_name)
-        if (!source_in) {
-          query_product.push({
-            op_type: o.op_type,
-            target: target_product,
-            ...source_product,
-          })
-          query_name.push(source_product.product_name)
-        }
-        if (!target_in) {
-          query_product.push({
-            op_type: o.op_type,
-            source: source_product,
-            ...target_product,
-          })
-          query_name.push(target_product.product_name)
-        }
-        product.push({
-          op_type: o.op_type,
-          target: target_product,
-          ...source_product,
-        })
-        product.push({
-          op_type: o.op_type,
-          source: source_product,
-          ...target_product,
-        })
-        break
-    }
-  })
-  let answer = ''
-  const item = []
-  if (query_product.length === 0) {
-    product.forEach(obj => {
-      const bill = history.item.find(o => o.name === obj.product_name)
-      const option = bill.option
-      const size_option = bill.size_option
-      const temp_option = bill.temp_option
-      let size = normalizeSize(obj.size)
-      let temp = normalizeTemperature(obj.temperature)
-      let qty = obj.qty
-      switch (o.op_type) {
-        case 'add':
-          qty = obj.qty ?? 1
-          break
-        case 'delete':
-          size = size ?? bill.size
-          temp = temp ?? bill.temp
-          qty = obj.qty ?? bill.qty
-          break
-        case 'update_spec':
-          qty = obj.qty ?? bill.qty
-          break
-        case 'update_qty':
-          size = size ?? bill.size
-          temp = temp ?? bill.temp
-          qty = obj.qty ?? 1
-          break
-        case 'replace_product':
-          if (!!obj.target) {
-            size = size ?? bill.size
-            temp = temp ?? bill.temp
-            qty = obj.qty ?? bill.qty
-          }
-          if (!!obj.source) {
-            const source = history.item.find(o => o.name === obj.source.product_name)
-            size = size ?? source.size
-            temp = temp ?? source.temp
-            qty = obj.qty ?? source.qty
-          }
-          break
-      }
-      item.push({
-        option,
-        size_option,
-        temp_option,
-        id: bill.id,
-        name: bill.name,
-        qty: obj.qty,
-        price: bill.price,
-        size,
-        temp,
-        need_size: size_option.length > 1 && (!size || !size_option.includes(size)),
-        need_temp: temp_option.length > 1 && (!temp || !temp_option.includes(temp)),
-      })
-    })
-  }
-  return {
-    intent,
-    product,
-    query_product,
-    query_name,
-  }
-}
-
-//#endregion
 
 //#region 处理修改信息
 
@@ -1115,22 +790,24 @@ function normalizeTemperature(temp) {
 }
 function getReply(obj) {
   if (obj.need_size || obj.need_temp) {
-    const error = !!obj.size || !!obj.temp
-    let reply = `您已选择${obj.name}${!!obj.size ? '，' + obj.size : ''}${!!obj.temp ? '，' + obj.temp : ''}，但其${error ? '只' : ''}存在`
+    const size_error = !!obj.size && !obj.size_option.includes(obj.size)
+    const temp_error = !!obj.temp && !obj.temp_option.includes(obj.size)
+    const error = size_error || temp_error
+    let reply = `您已选择${obj.name}${!!obj.size && obj.size !== 'null' ? '，' + obj.size : ''}${!!obj.temp && obj.temp !== 'null' ? '，' + obj.temp : ''}，但其${error ? '只' : ''}存在`
     if (obj.need_size) {
       reply += `${obj.size_option.length}个容量选项（${obj.size_option.join('、')}），`
     }
     if (obj.need_temp) {
       reply += `${obj.temp_option.length}个温度选项（${obj.temp_option.join('、')}），`
     }
-    reply += `请${error ? '重新' : ''}选择。`
+    reply += `请${error ? '重新' : ''}选择或者取消。`
     return reply
   }
   const size = obj.size_option.length === 1 && obj.size_option[0] !== obj.size ? obj.size_option[0] : obj.size
   const temp = obj.temp_option.length === 1 && obj.temp_option[0] !== obj.temp ? obj.temp_option[0] : obj.temp
   const price = Number(obj.price) + Number(obj.option[size]) + Number(obj.option[temp])
   const total = price * Number(obj.qty)
-  const reply = `${obj.name}${obj.qty}杯，${obj.size}（${size === obj.size ? `可选：${obj.size_option.join('、')}` : `但其只有${size}`}），${obj.temp}（${temp === obj.temp ? `可选：${obj.temp_option.join('、')}` : `但其只有${temp}`}），价格${obj.qty * price}元；\n`
+  const reply = `${obj.name}${obj.qty}杯，${!!obj.size ? obj.size : size}（${!obj.size || size === obj.size ? `可选：${obj.size_option.join('、')}` : `但其只有${size}`}），${!!obj.temp ? obj.temp : temp}（${!obj.temp || temp === obj.temp ? `可选：${obj.temp_option.join('、')}` : `但其只有${temp}`}），价格${obj.qty * price}元；\n`
   return { total, reply }
 }
 function main({text, output, product, history, intent}) {
