@@ -375,7 +375,7 @@ function main({text, history, product, intent, miss_item}) {
             temp_option.push(key)
           }
         })
-        const qty = Number.isNaN(obj?.qty) ? null : Number(obj?.qty)
+        const qty = Number.isNaN(Number(obj?.qty)) || obj?.qty === null ? null : Number(obj?.qty)
         if (intent === 'add') {
           const add_item = new_item.filter(o => o.name === name
             && (size === o.size || (size_option.length === 1 && (!size || size === size_option[0])))
@@ -964,14 +964,14 @@ function filterProduct(history, product) {
   const item_name = {}
   add_item.forEach(o => item_name[o.name] = o)
   product.forEach(o => {
-    if (!item_name[o.source_name]) {
+    if ((!!o.source_name || o.source_name !== 'null') && !item_name[o.source_name]) {
       if (product_index[o.source_name] === undefined) {
         product_index[o.source_name] = product_name.length
         product_name.push(o.source_name)
       }
       source_index[o.source_name] = product_index[o.source_name]
     }
-    if (!item_name[o.target_name]) {
+    if ((!!o.target_name || o.target_name !== 'null') && !item_name[o.target_name]) {
       if (product_index[o.target_name] === undefined) {
         product_index[o.target_name] = product_name.length
         product_name.push(o.target_name)
@@ -1190,8 +1190,8 @@ function main({text, output, product, history, intent}) {
       const source_temp = normalizeTemperature(edit.source_temp)
       const target_size = normalizeSize(edit.target_size)
       const target_temp = normalizeTemperature(edit.target_temp)
-      const source_qty = Number.isNaN(edit?.source_qty) ? null : Number(edit.source_qty)
-      const target_qty = Number.isNaN(edit?.target_qty) ? null : Number(edit.target_qty)
+      const source_qty = Number.isNaN(Number(edit.source_qty)) || edit.source_qty === null ? null : Number(edit.source_qty)
+      const target_qty = Number.isNaN(Number(edit.target_qty)) || edit.target_qty === null ? null : Number(edit.target_qty)
       const source_size_option = source?.size_option
       const source_temp_option = source?.temp_option
       if (intent === 'update_spec') {
@@ -1307,6 +1307,8 @@ function main({text, output, product, history, intent}) {
           }
           else {
             const qty = target_qty
+            const size = target_size ?? replace_item[0].size
+            const temp = target_temp ?? replace_item[0].temp
             if (!qty || qty >= replace_item[0].qty) {
               if (target_item.length === 0) {
                 new_item = new_item.map(v => {
