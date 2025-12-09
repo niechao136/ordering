@@ -20,102 +20,8 @@ function handleLLM(text) {
   }
   return obj;
 }
-function normalizeSize(size) {
-  if (!size) return null
-
-  const text = String(size).trim()
-
-  if (/大|大杯/i.test(text)) return '大杯'
-  if (/中|中杯/i.test(text)) return '中杯'
-
-  return null
-}
-function normalizeTemperature(temp) {
-  if (!temp) return null
-
-  const text = String(temp).trim()
-
-  // 冰类（冰、微冰、少冰、去冰、冰凉、冷 等）
-  if (/[冰冷]/i.test(text)) return '冰的'
-
-  // 热类（热、熱、溫、温、暖 等）
-  if (/[热熱温溫暖]/i.test(text)) return '熱的'
-
-  return null
-}
-function getReply(obj) {
-  if (obj.need_size || obj.need_temp) {
-    const size_error = !!obj.size && !obj.size_option.includes(obj.size)
-    const temp_error = !!obj.temp && !obj.temp_option.includes(obj.size)
-    const error = size_error || temp_error
-    let reply = `您已选择${obj.name}${!!obj.size && obj.size !== 'null' ? '，' + obj.size : ''}${!!obj.temp && obj.temp !== 'null' ? '，' + obj.temp : ''}，但其${error ? '只' : ''}存在`
-    if (obj.need_size) {
-      reply += `${obj.size_option.length}个容量选项（${obj.size_option.join('、')}），`
-    }
-    if (obj.need_temp) {
-      reply += `${obj.temp_option.length}个温度选项（${obj.temp_option.join('、')}），`
-    }
-    reply += `请${error ? '重新' : ''}选择或者取消。`
-    return reply
-  }
-  const size = obj.size_option.length === 1 && obj.size_option[0] !== obj.size ? obj.size_option[0] : obj.size
-  const temp = obj.temp_option.length === 1 && obj.temp_option[0] !== obj.temp ? obj.temp_option[0] : obj.temp
-  const price = Number(obj.price) + Number(obj.option[size]) + Number(obj.option[temp])
-  const total = price * Number(obj.qty)
-  const reply = `${obj.name}${obj.qty}杯，${!!obj.size ? obj.size : size}（${!obj.size || size === obj.size ? `可选：${obj.size_option.join('、')}` : `但其只有${size}`}），${!!obj.temp ? obj.temp : temp}（${!obj.temp || temp === obj.temp ? `可选：${obj.temp_option.join('、')}` : `但其只有${temp}`}），价格${obj.qty * price}元；\n`
-  return { total, reply }
-}
-function handleReply(history, query, intent) {
-  let new_reply = { ...history.reply }
-  if (!new_reply.size) {
-    const size = normalizeSize(query)
-    if (!!size && new_reply.size_option.includes(size)) {
-      new_reply.size = size
-      new_reply.need_size = false
-    }
-  }
-  if (!new_reply.temp) {
-    const temp = normalizeTemperature(query)
-    if (!!temp && new_reply.temp_option.includes(temp)) {
-      new_reply.temp = temp
-      new_reply.need_temp = false
-    }
-  }
-  const new_item = history.item.map(o => {
-    if (o.id !== new_reply.id) {
-      return o
-    }
-    return new_reply
-  })
-  if (!!new_reply.size && !!new_reply.temp) {
-    new_reply = new_item.find(o => o.need_size || o.need_temp) ?? null
-  }
-  let new_history = {
-    reply: new_reply,
-    item: new_item,
-  }
-  let answer = ''
-  if (intent === 'cancel') {
-    answer = '已为您取消订单，您可以重新点餐或者提问。'
-    new_history = {}
-  }
-  else if (!!new_reply) {
-    answer += getReply(new_reply)
-  }
-  else {
-    let total = 0, reply = ''
-    const list = new_item.map(getReply)
-    list.forEach(o => {
-      reply += o.reply
-      total += o.total
-    })
-    answer += `您已选择以下产品，总价${total}元，您可以选择结账、增改删除产品或者取消：\n`
-    answer += reply
-  }
-  return {
-    history: new_history,
-    answer,
-  }
+function isNull(value) {
+  return !value || value === 'null'
 }
 function filterProduct(history, product) {
   const product_name = []
@@ -123,51 +29,79 @@ function filterProduct(history, product) {
   const item_name = {}
   add_item.forEach(o => item_name[o.name] = o)
   product.forEach(o => {
-    if ((!!o.product_name && o.product_name !== 'null') && !item_name[o.product_name]) {
+    if (!isNull(o.product_name) && !item_name[o.product_name]) {
       product_name.push(o.product_name)
     }
   })
   return product_name
 }
-function main({text, history, query}) {
+function formatProduct(o) {
+  const size = !!o.size ? o.size : o.size_option[0]
+  const temp = !!o.temp ? o.temp : o.temp_option[0]
+  return {
+    name: o.name,
+    price: o.price,
+    options: [
+      {
+        name: size,
+        price: o.option[size],
+      },
+      {
+        name: temp,
+        price: o.option[temp],
+      },
+    ]
+  }
+}
+function getProduct(item) {
+  const res = []
+  const product = Array.isArray(item) ? Array.from(item) : []
+  product.forEach(o => {
+    for (let i = 0; i < o.qty; i++) {
+      res.push(formatProduct(o))
+    }
+  })
+  return res
+}
+function main({text, history}) {
   const obj = handleLLM(text)
   const intent = String(obj.intent || '')
-  const product = Array.isArray(obj.items) ? Array.from(obj.items) : (!!obj.items ? [obj.items] : [])
-  const is_reply = !!history.reply
-  let new_history = {}
-  let answer = ''
+  const items = Array.isArray(obj.items) ? Array.from(obj.items) : (!isNull(obj?.items?.product_name) ? [obj.items] : [])
+  let product = getProduct(history.item)
+  let dify = ''
+  let is_finish = false
   let product_name = []
-  if (is_reply) {
-    const reply = handleReply(history, query, intent)
-    new_history = reply.history
-    answer = reply.answer
-  }
-  else if (intent === 'cancel') {
+  if (intent === 'cancel') {
     if (!!history.item) {
-      answer = '已为您取消订单，您可以重新点餐或者提问。'
+      dify = '好的，已為您取消訂單，您可以重新點餐或提問。'
+      product = []
     } else {
-      answer = '目前没有订单可以取消，您可以重新点餐或者提问。'
+      dify = '抱歉，目前沒有訂單可以取消，您可以重新點餐或提問。'
     }
   }
   else if (intent === 'checkout') {
     if (!!history.item) {
-      answer = '结账'
+      dify = '好的，已為您開啟結帳流程。'
+      is_finish = true
     } else {
-      answer = '目前没有订单可以结账，您可以重新点餐或者提问。'
+      dify = '抱歉，目前沒有訂單可以結帳，您可以重新點餐或提問。'
     }
   }
   else if (intent === 'mixed') {
-    answer = '目前暂不支持一次处理多种操作，请您分次操作。'
+    dify = '抱歉，目前暫不支援一次處理多種操作，請分次操作。'
   }
   else if (intent === 'add' || intent === 'delete') {
-    product_name = filterProduct(history, product)
+    product_name = filterProduct(history, items)
+  }
+  const answer = {
+    dify,
+    is_finish,
+    product,
   }
   return {
-    is_reply,
     intent,
-    product,
+    items,
     product_name,
-    new_history,
     answer,
   }
 }
@@ -212,8 +146,8 @@ function parseToObject(str) {
 
   return obj;
 }
-function main({result, index, product, product_name}) {
-  const obj = product.find(o => o.product_name === product_name[index])
+function main({result, item, items}) {
+  const obj = items.find(o => o.product_name === item)
   const kb = parseToObject(result[0]?.content ?? '')
   const res = {
     ...obj,
@@ -227,7 +161,10 @@ function main({result, index, product, product_name}) {
 //#endregion
 //#region 统一处理点餐商品
 
-function main({output, product, history}) {
+function isNull(value) {
+  return !value || value === 'null'
+}
+function main({output, items, history}) {
   const query_id = []
   const list = []
   const item_id = {}
@@ -239,23 +176,26 @@ function main({output, product, history}) {
     Array.from(output).forEach(o => by_name[o.product_name] = o)
   }
   const miss_item = []
-  product.forEach(o => {
+  items.forEach(o => {
     if (!!by_name[o.product_name]) {
       const obj = by_name[o.product_name]
       if (!!obj.id && !item_id[obj.id]) {
         query_id.push(`'${obj.id}'`)
         list.push(obj)
       } else {
-        miss_item.push(!o.product_name || o.product_name === 'null' ? '' : o.product_name)
+        miss_item.push(isNull(o.product_name) ? '' : o.product_name)
       }
-    } else {
+    } else if (!!o.product_name) {
       list.push(o)
+    } else {
+      miss_item.push(isNull(o.product_name) ? '' : o.product_name)
     }
   })
   const sql = `SELECT * FROM pos.product_option WHERE product_id IN (${query_id.join(', ')});`
   return {
     sql,
-    product: list,
+    items: list,
+    query_id,
     miss_item,
   }
 }
@@ -290,7 +230,7 @@ function normalizeSize(size) {
 
   return null
 }
-function normalizeTemperature(temp) {
+function normalizeTemp(temp) {
   if (!temp) return null
 
   const text = String(temp).trim()
@@ -303,29 +243,85 @@ function normalizeTemperature(temp) {
 
   return null
 }
-function getReply(obj) {
-  if (obj.need_size || obj.need_temp) {
-    const size_error = !!obj.size && !obj.size_option.includes(obj.size)
-    const temp_error = !!obj.temp && !obj.temp_option.includes(obj.size)
-    const error = size_error || temp_error
-    let reply = `您已选择${obj.name}${!!obj.size && obj.size !== 'null' ? '，' + obj.size : ''}${!!obj.temp && obj.temp !== 'null' ? '，' + obj.temp : ''}，但其${error ? '只' : ''}存在`
-    if (obj.need_size) {
-      reply += `${obj.size_option.length}个容量选项（${obj.size_option.join('、')}），`
-    }
-    if (obj.need_temp) {
-      reply += `${obj.temp_option.length}个温度选项（${obj.temp_option.join('、')}），`
-    }
-    reply += `请${error ? '重新' : ''}选择或者取消。`
-    return reply
-  }
-  const size = obj.size_option.length === 1 && obj.size_option[0] !== obj.size ? obj.size_option[0] : obj.size
-  const temp = obj.temp_option.length === 1 && obj.temp_option[0] !== obj.temp ? obj.temp_option[0] : obj.temp
-  const price = Number(obj.price) + Number(obj.option[size]) + Number(obj.option[temp])
-  const total = price * Number(obj.qty)
-  const reply = `${obj.name}${obj.qty}杯，${!!obj.size ? obj.size : size}（${!obj.size || size === obj.size ? `可选：${obj.size_option.join('、')}` : `但其只有${size}`}），${!!obj.temp ? obj.temp : temp}（${!obj.temp || temp === obj.temp ? `可选：${obj.temp_option.join('、')}` : `但其只有${temp}`}），价格${obj.qty * price}元；\n`
-  return { total, reply }
+function isNull(value) {
+  return !value || value === 'null'
 }
-function main({text, history, product, intent, miss_item}) {
+function getSize(obj, size_option) {
+  const format_size = normalizeSize(obj.size)
+  const default_size = size_option.find(o => o === '中杯') ?? size_option[0]
+  return !!format_size && size_option.includes(format_size) ? format_size : default_size
+}
+function getTemp(obj, temp_option) {
+  const name = !!obj.name ? obj.name : obj.product_name
+  const format_temp = normalizeTemp(obj.temperature)
+  const def = normalizeTemp(name) ?? '冰的'
+  const default_temp = temp_option.find(o => o === def) ?? temp_option[0]
+  return !!format_temp && temp_option.includes(format_temp) ? format_temp : default_temp
+}
+function getQty(qty) {
+  return isNull(qty) || Number.isNaN(Number(qty)) ? null : Number(qty)
+}
+function getOption(item, option_by_id, obj) {
+  if (!!item) {
+    const option = item.option
+    const size_option = item.size_option
+    const temp_option = item.temp_option
+    return {
+      option,
+      size_option,
+      temp_option,
+    }
+  }
+  const option = option_by_id[obj.id] ?? {}
+  const format = {}
+  const size_option = []
+  const temp_option = []
+  Object.keys(option).forEach(o => {
+    let key = normalizeSize(o)
+    if (!!key) {
+      format[key] = option[o]
+      size_option.push(key)
+    } else {
+      key = normalizeTemp(o)
+      format[key] = option[o]
+      temp_option.push(key)
+    }
+  })
+  return {
+    option: format,
+    size_option,
+    temp_option,
+  }
+}
+function formatProduct(o) {
+  const size = !!o.size ? o.size : o.size_option[0]
+  const temp = !!o.temp ? o.temp : o.temp_option[0]
+  return {
+    name: o.name,
+    price: o.price,
+    options: [
+      {
+        name: size,
+        price: o.option[size],
+      },
+      {
+        name: temp,
+        price: o.option[temp],
+      },
+    ]
+  }
+}
+function getProduct(item) {
+  const res = []
+  const product = Array.isArray(item) ? Array.from(item) : []
+  product.forEach(o => {
+    for (let i = 0; i < o.qty; i++) {
+      res.push(formatProduct(o))
+    }
+  })
+  return res
+}
+function main({text, history, items, intent, miss_item}) {
   const option_by_id = {}
   if (!!text) {
     const option = parseMd(text)
@@ -338,137 +334,119 @@ function main({text, history, product, intent, miss_item}) {
   }
   const item_id = {}
   const item_name = {}
-  history?.item?.forEach(o => {
+  let new_item = Array.isArray(history?.item) ? Array.from(history.item) : []
+  new_item.forEach(o => {
     item_id[o.id] = o
     item_name[o.name] = o
   })
-  let answer = ''
+  let product = getProduct(new_item)
+  let dify = ''
+  let is_finish = false
   let is_error = false
   if (miss_item.length > 0) {
-    answer += `抱歉，${miss_item.join('、')}未检索到相关品项。\n`
+    dify = `抱歉，${miss_item.join('、')}未檢索到相關項目。`
+    is_error = true
   }
-  let new_item = Array.isArray(history?.item) ? Array.from(history.item) : []
-  if (intent === 'delete' && new_item.length === 0) {
-    answer += '目前没有订单可以删除产品，您可以重新点餐或者提问。\n'
+  else if (intent === 'delete' && new_item.length === 0) {
+    dify = '抱歉，目前沒有訂單可以刪除產品，您可以重新點餐或提問。'
     is_error = true
   }
   else {
-    product.forEach(obj => {
-      let item = null
-      if (!obj.id) {
-        item = item_name[obj.product_name]
-      }
-      else if (!!item_id[obj.id]) {
-        item = item_id[obj.id]
-      }
+    for (const obj of items) {
+      let item = !obj.id ? item_name[obj.product_name] : (!!item_id[obj.id] ? item_id[obj.id] : null)
       if (!item && intent === 'delete') {
-        answer += `目前订单中不存在${obj.product_name}这一产品，请确认。\n`
+        dify += `抱歉，目前訂單中不存在${obj.product_name}這一產品，請確認。`
         is_error = true
+        break
       }
-      else {
-        const name = !!obj.name ? obj.name : obj.product_name
+      const name = !!obj.name ? obj.name : obj.product_name
+      const { option, size_option, temp_option } = getOption(item, option_by_id, obj)
+      const qty = getQty(obj?.qty)
+      if (intent === 'add') {
+        const size = getSize(obj, size_option)
+        const temp = getTemp(obj, temp_option)
+        const add_item = new_item.filter(o => o.name === name && size === o.size && temp === o.temp)
+        if (add_item.length > 0) {
+          new_item = new_item.map(v => {
+            if (v === add_item[0]) {
+              return {
+                ...v,
+                qty: add_item[0].qty + Number(qty ?? 1),
+              }
+            }
+            return v
+          })
+        }
+        else {
+          new_item.push({
+            option,
+            size_option,
+            temp_option,
+            id: !!item ? item.id : obj.id,
+            name: name,
+            qty: qty ?? 1,
+            price: obj.price,
+            size,
+            temp,
+          })
+        }
+        if (!dify) {
+          dify = '好的，以為您添加'
+        }
+        dify += `${qty ?? 1}杯${name}${!!size ? `，${size}`: ''}${!!temp ? `，${temp}`: ''}；`
+      }
+      else if (intent === 'delete') {
         const size = normalizeSize(obj.size)
-        const temp = normalizeTemperature(obj.temperature)
-        const option = !!item ? item.option : option_by_id[obj.id] ?? {}
-        const format = {}
-        const size_option = []
-        const temp_option = []
-        Object.keys(option).forEach(o => {
-          let key = normalizeSize(o)
-          if (!!key) {
-            format[key] = option[o]
-            size_option.push(key)
-          } else {
-            key = normalizeTemperature(o)
-            format[key] = option[o]
-            temp_option.push(key)
+        const temp = normalizeTemp(obj.temperature)
+        const del_item = new_item.filter(o => o.name === name
+          && (!size || size === o.size || (size_option.length === 1 && size === size_option[0]))
+          && (!temp || temp === o.temp || (temp_option.length === 1 && temp === temp_option[0])))
+        if (del_item.length > 1) {
+          dify = `抱歉，目前訂單中存在多款${obj.product_name}${!!size ? `，${size}`: ''}${!!temp ? `，${temp}`: ''}這一產品，請確認。`
+          is_error = true
+          break
+        }
+        else if (del_item.length === 0) {
+          dify = `抱歉，目前訂單中不存在${obj.product_name}${!!size ? `，${size}`: ''}${!!temp ? `，${temp}`: ''}這一產品，請確認。`
+          is_error = true
+          break
+        }
+        else {
+          if (!qty || qty >= del_item[0].qty) {
+            new_item = new_item.filter(v => v !== del_item[0])
           }
-        })
-        const qty = Number.isNaN(Number(obj?.qty)) || obj?.qty === null ? null : Number(obj?.qty)
-        if (intent === 'add') {
-          const add_item = new_item.filter(o => o.name === name
-            && (size === o.size || (size_option.length === 1 && (!size || size === size_option[0])))
-            && (temp === o.temp || (temp_option.length === 1 && (!temp || temp === temp_option[0]))))
-          if (add_item.length > 0) {
+          else {
             new_item = new_item.map(v => {
-              if (v === add_item[0]) {
+              if (v === del_item[0]) {
                 return {
                   ...v,
-                  qty: add_item[0].qty + Number(qty ?? 1),
+                  qty: del_item[0].qty - Number(qty),
                 }
               }
               return v
             })
           }
-          else {
-            new_item.push({
-              option: format,
-              size_option,
-              temp_option,
-              id: !!item ? item.id : obj.id,
-              name: name,
-              qty: qty ?? 1,
-              price: obj.price,
-              size,
-              temp,
-              need_size: size_option.length > 1 && (!size || !size_option.includes(size)),
-              need_temp: temp_option.length > 1 && (!temp || !temp_option.includes(temp)),
-            })
+          if (!dify) {
+            dify = '好的，已為您刪除'
           }
-        }
-        else if (intent === 'delete') {
-          const del_item = new_item.filter(o => o.name === name
-            && (!size || size === o.size || (size_option.length === 1 && size === size_option[0]))
-            && (!temp || temp === o.temp || (temp_option.length === 1 && temp === temp_option[0])))
-          if (del_item.length > 1) {
-            answer += `目前订单中存在多款${obj.product_name}${!!size ? `，${size}`: ''}${!!temp ? `，${temp}`: ''}这一产品，请确认。\n`
-            is_error = true
-          }
-          else if (del_item.length === 0) {
-            answer += `目前订单中不存在${obj.product_name}${!!size ? `，${size}`: ''}${!!temp ? `，${temp}`: ''}这一产品，请确认。\n`
-            is_error = true
-          }
-          else {
-            if (!qty || qty >= del_item[0].qty) {
-              new_item = new_item.filter(v => v !== del_item[0])
-            }
-            else {
-              new_item = new_item.map(v => {
-                if (v === del_item[0]) {
-                  return {
-                    ...v,
-                    qty: del_item[0].qty - Number(qty),
-                  }
-                }
-                return v
-              })
-            }
-          }
+          dify += `${!qty ? '' : `${qty >= del_item[0].qty ? del_item[0].qty : qty}杯`}${name}${!!size ? `，${size}`: ''}${!!temp ? `，${temp}`: ''}；`
         }
       }
-    })
+    }
   }
   let new_history = {
     ...history
   }
   if (!is_error) {
-    const reply = new_item.find(o => o.need_size || o.need_temp) ?? null
     new_history = {
-      reply,
       item: new_item,
     }
-    if (!!reply) {
-      answer += getReply(reply)
-    } else {
-      let total = 0, reply = ''
-      const list = new_item.map(getReply)
-      list.forEach(o => {
-        reply += o.reply
-        total += o.total
-      })
-      answer += `您已选择以下产品，总价${total}元，您可以选择结账、增改删除产品或者取消：\n`
-      answer += reply
-    }
+    product = getProduct(new_item)
+  }
+  const answer = {
+    dify,
+    is_finish,
+    product,
   }
   return {
     new_history,
@@ -516,23 +494,58 @@ function parseToObject(str) {
 
   return obj;
 }
-function main({result}) {
-  const product = result.map(o => parseToObject(o?.content ?? '')).filter(o => !!o.id)
-  const query_id = product.map(o => `'${o.id}'`)
+function formatProduct(o) {
+  const size = !!o.size ? o.size : o.size_option[0]
+  const temp = !!o.temp ? o.temp : o.temp_option[0]
+  return {
+    name: o.name,
+    price: o.price,
+    options: [
+      {
+        name: size,
+        price: o.option[size],
+      },
+      {
+        name: temp,
+        price: o.option[temp],
+      },
+    ]
+  }
+}
+function getProduct(item) {
+  const res = []
+  const product = Array.isArray(item) ? Array.from(item) : []
+  product.forEach(o => {
+    for (let i = 0; i < o.qty; i++) {
+      res.push(formatProduct(o))
+    }
+  })
+  return res
+}
+function main({result, history}) {
+  const items = result.map(o => parseToObject(o?.content ?? '')).filter(o => !!o.id)
+  const query_id = items.map(o => `'${o.id}'`)
   const sql = `SELECT * FROM pos.product_option WHERE product_id IN (${query_id.join(', ')});`
-  let answer = ''
-  if (product.length === 0) {
-    answer += '抱歉，未检索到相关产品，无法进行推荐。'
+  let product = getProduct(history.item)
+  let dify = ''
+  let is_finish = false
+  if (items.length === 0) {
+    dify += '抱歉，未检索到相关产品，无法进行推荐。'
+  }
+  const answer = {
+    dify,
+    is_finish,
+    product,
   }
   return {
-    product,
+    items,
     sql,
     answer,
   }
 }
 
 //#endregion
-//#region 处理推荐检索
+//#region 整合推荐信息
 
 function parseRow(line) {
   return String(line).trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(col => String(col).trim())
@@ -561,7 +574,7 @@ function normalizeSize(size) {
 
   return null
 }
-function normalizeTemperature(temp) {
+function normalizeTemp(temp) {
   if (!temp) return null
 
   const text = String(temp).trim()
@@ -574,8 +587,67 @@ function normalizeTemperature(temp) {
 
   return null
 }
-function main({text, product}) {
-  let answer = ''
+function getOption(item, option_by_id, obj) {
+  if (!!item) {
+    const option = item.option
+    const size_option = item.size_option
+    const temp_option = item.temp_option
+    return {
+      option,
+      size_option,
+      temp_option,
+    }
+  }
+  const option = option_by_id[obj.id] ?? {}
+  const format = {}
+  const size_option = []
+  const temp_option = []
+  Object.keys(option).forEach(o => {
+    let key = normalizeSize(o)
+    if (!!key) {
+      format[key] = option[o]
+      size_option.push(key)
+    } else {
+      key = normalizeTemp(o)
+      format[key] = option[o]
+      temp_option.push(key)
+    }
+  })
+  return {
+    option: format,
+    size_option,
+    temp_option,
+  }
+}
+function formatProduct(o) {
+  const size = !!o.size ? o.size : o.size_option[0]
+  const temp = !!o.temp ? o.temp : o.temp_option[0]
+  return {
+    name: o.name,
+    price: o.price,
+    options: [
+      {
+        name: size,
+        price: o.option[size],
+      },
+      {
+        name: temp,
+        price: o.option[temp],
+      },
+    ]
+  }
+}
+function getProduct(item) {
+  const res = []
+  const product = Array.isArray(item) ? Array.from(item) : []
+  product.forEach(o => {
+    for (let i = 0; i < o.qty; i++) {
+      res.push(formatProduct(o))
+    }
+  })
+  return res
+}
+function main({text, items, history}) {
   const option_by_id = {}
   if (!!text) {
     const option = parseMd(text)
@@ -586,29 +658,69 @@ function main({text, product}) {
       option_by_id[o.product_id][o.name] = Number(o?.price ?? 0)
     })
   }
-  answer += '为您推荐以下产品：\n'
-  product.forEach(obj => {
-    const option = option_by_id[obj.id]
-    const format = {}
-    const size_option = []
-    const temp_option = []
-    Object.keys(option).forEach(o => {
-      let key = normalizeSize(o)
-      if (!!key) {
-        format[key] = option[o]
-        size_option.push(key)
-      } else {
-        key = normalizeTemperature(o)
-        format[key] = option[o]
-        temp_option.push(key)
-      }
-    })
-    const add = Object.keys(format).filter(k => format[k] > 0)
-    let add_text = add.length > 0 ? `，其中：${add.map(o => `${o}+${format[o]}元`)}` : ''
-    answer += `${obj.name}，可选容量：${size_option.join('、')}，可选温度：${temp_option.join('、')}，单价：${obj.price}元${add_text}；\n`
+  let product = getProduct(history.item)
+  let dify = ''
+  let is_finish = false
+  dify += '好的，為您推薦以下產品：\n'
+  items.forEach(obj => {
+    const { option, size_option, temp_option } = getOption(null, option_by_id, obj)
+    const add = Object.keys(option).filter(k => option[k] > 0)
+    let add_text = add.length > 0 ? `，其中：${add.map(o => `${o}+${option[o]}元`)}` : ''
+    dify += `${obj.name}，可選容量：${size_option.join('、')}，可選溫度：${temp_option.join('、')}，單價：${obj.price}元${add_text}；\n`
   })
+  const answer = {
+    dify,
+    is_finish,
+    product,
+  }
   return {
     answer,
+  }
+}
+
+//#endregion
+
+//#region 处理闲聊
+
+function formatProduct(o) {
+  const size = !!o.size ? o.size : o.size_option[0]
+  const temp = !!o.temp ? o.temp : o.temp_option[0]
+  return {
+    name: o.name,
+    price: o.price,
+    options: [
+      {
+        name: size,
+        price: o.option[size],
+      },
+      {
+        name: temp,
+        price: o.option[temp],
+      },
+    ]
+  }
+}
+function getProduct(item) {
+  const res = []
+  const product = Array.isArray(item) ? Array.from(item) : []
+  product.forEach(o => {
+    for (let i = 0; i < o.qty; i++) {
+      res.push(formatProduct(o))
+    }
+  })
+  return res
+}
+function main({text, history}) {
+  let product = getProduct(history.item)
+  let dify = text
+  let is_finish = false
+  const answer = {
+    dify,
+    is_finish,
+    product,
+  }
+  return {
+    answer
   }
 }
 
@@ -617,58 +729,58 @@ function main({text, product}) {
 //#region 处理修改信息
 
 function handleLLM(text) {
-  const regex = /```json([\s\S]*?)```/
-  const _res = text.replaceAll(/<think>[\s\S]*?<\/think>/g, '')
+  const regex = /```json([\s\S]*?)```/;
+  const _res = text.replaceAll(/<think>[\s\S]*?<\/think>/g, '');
   const match = _res.match(regex);
-  const res = !!match ? match[1].trim() : _res
-  const str = res.replaceAll(/\/\/.*$/gm, '').replaceAll(/\/\*[\s\S]*?\*\//g, '')
-  let obj
+  const res = match ? match[1].trim() : _res;
+
+  // 更安全的注释移除，不会误删 URL 与字符串内容
+  const str = res
+    .replace(/\/\/(?!\s*http)[^\n]*/g, '')       // 去掉行注释，但保留 https://
+    .replace(/\/\*[\s\S]*?\*\//g, '');           // 块注释
+
+  let obj;
   try {
-    obj = JSON.parse(str)
+    obj = JSON.parse(str);
   } catch (e) {
-    obj = {}
+    obj = {};
   }
-  return obj
+  return obj;
+}
+function isNull(value) {
+  return !value || value === 'null'
 }
 function filterProduct(history, product) {
   const product_name = []
   const product_index = {}
-  const source_index = {}
-  const target_index = {}
   const add_item = Array.isArray(history.item) ? Array.from(history.item) : []
   const item_name = {}
   add_item.forEach(o => item_name[o.name] = o)
   product.forEach(o => {
-    if ((!!o.source_name || o.source_name !== 'null') && !item_name[o.source_name]) {
+    if (!isNull(o.source_name) && !item_name[o.source_name]) {
       if (product_index[o.source_name] === undefined) {
         product_index[o.source_name] = product_name.length
         product_name.push(o.source_name)
       }
-      source_index[o.source_name] = product_index[o.source_name]
     }
-    if ((!!o.target_name || o.target_name !== 'null') && !item_name[o.target_name]) {
+    if (!isNull(o.target_name) && !item_name[o.target_name]) {
       if (product_index[o.target_name] === undefined) {
         product_index[o.target_name] = product_name.length
         product_name.push(o.target_name)
       }
-      target_index[o.target_name] = product_index[o.target_name]
     }
   })
   return {
     product_name,
-    source_index,
-    target_index,
   }
 }
 function main({text, history}) {
   const obj = handleLLM(text)
-  const product = Array.isArray(obj.items) ? Array.from(obj.items) : (!!obj.items ? [obj.items] : [])
-  const { product_name, source_index, target_index } = filterProduct(history, product)
+  const items = Array.isArray(obj.items) ? Array.from(obj.items) : (!isNull(obj?.items) ? [obj.items] : [])
+  const { product_name } = filterProduct(history, items)
   return {
-    product,
+    items,
     product_name,
-    source_index,
-    target_index,
   }
 }
 
@@ -775,7 +887,7 @@ function normalizeSize(size) {
 
   return null
 }
-function normalizeTemperature(temp) {
+function normalizeTemp(temp) {
   if (!temp) return null
 
   const text = String(temp).trim()
@@ -788,29 +900,86 @@ function normalizeTemperature(temp) {
 
   return null
 }
-function getReply(obj) {
-  if (obj.need_size || obj.need_temp) {
-    const size_error = !!obj.size && !obj.size_option.includes(obj.size)
-    const temp_error = !!obj.temp && !obj.temp_option.includes(obj.size)
-    const error = size_error || temp_error
-    let reply = `您已选择${obj.name}${!!obj.size && obj.size !== 'null' ? '，' + obj.size : ''}${!!obj.temp && obj.temp !== 'null' ? '，' + obj.temp : ''}，但其${error ? '只' : ''}存在`
-    if (obj.need_size) {
-      reply += `${obj.size_option.length}个容量选项（${obj.size_option.join('、')}），`
-    }
-    if (obj.need_temp) {
-      reply += `${obj.temp_option.length}个温度选项（${obj.temp_option.join('、')}），`
-    }
-    reply += `请${error ? '重新' : ''}选择或者取消。`
-    return reply
-  }
-  const size = obj.size_option.length === 1 && obj.size_option[0] !== obj.size ? obj.size_option[0] : obj.size
-  const temp = obj.temp_option.length === 1 && obj.temp_option[0] !== obj.temp ? obj.temp_option[0] : obj.temp
-  const price = Number(obj.price) + Number(obj.option[size]) + Number(obj.option[temp])
-  const total = price * Number(obj.qty)
-  const reply = `${obj.name}${obj.qty}杯，${!!obj.size ? obj.size : size}（${!obj.size || size === obj.size ? `可选：${obj.size_option.join('、')}` : `但其只有${size}`}），${!!obj.temp ? obj.temp : temp}（${!obj.temp || temp === obj.temp ? `可选：${obj.temp_option.join('、')}` : `但其只有${temp}`}），价格${obj.qty * price}元；\n`
-  return { total, reply }
+function isNull(value) {
+  return !value || value === 'null'
 }
-function main({text, output, product, history, intent}) {
+function getQty(qty) {
+  return isNull(qty) || Number.isNaN(Number(qty)) ? null : Number(qty)
+}
+function getOption(item, option_by_id, obj) {
+  if (!!item) {
+    const option = item.option
+    const size_option = item.size_option
+    const temp_option = item.temp_option
+    return {
+      option,
+      size_option,
+      temp_option,
+    }
+  }
+  const option = option_by_id[obj.id] ?? {}
+  const format = {}
+  const size_option = []
+  const temp_option = []
+  Object.keys(option).forEach(o => {
+    let key = normalizeSize(o)
+    if (!!key) {
+      format[key] = option[o]
+      size_option.push(key)
+    } else {
+      key = normalizeTemp(o)
+      format[key] = option[o]
+      temp_option.push(key)
+    }
+  })
+  return {
+    option: format,
+    size_option,
+    temp_option,
+  }
+}
+function getObj(item_name, by_name, item_id, name) {
+  let source = null
+  if (!!item_name[name]) {
+    source = item_name[name]
+  }
+  else if (!!by_name[name]) {
+    source = by_name[name]
+    if (!!item_id[source.id]) {
+      source = item_id[source.id]
+    }
+  }
+  return source
+}
+function formatProduct(o) {
+  const size = !!o.size ? o.size : o.size_option[0]
+  const temp = !!o.temp ? o.temp : o.temp_option[0]
+  return {
+    name: o.name,
+    price: o.price,
+    options: [
+      {
+        name: size,
+        price: o.option[size],
+      },
+      {
+        name: temp,
+        price: o.option[temp],
+      },
+    ]
+  }
+}
+function getProduct(item) {
+  const res = []
+  const product = Array.isArray(item) ? Array.from(item) : []
+  product.forEach(o => {
+    for (let i = 0; i < o.qty; i++) {
+      res.push(formatProduct(o))
+    }
+  })
+  return res
+}
+function main({text, output, items, history, intent}) {
   const option_by_id = {}
   if (!!text) {
     const option = parseMd(text)
@@ -823,7 +992,8 @@ function main({text, output, product, history, intent}) {
   }
   const item_id = {}
   const item_name = {}
-  history?.item?.forEach(o => {
+  let new_item = Array.isArray(history?.item) ? Array.from(history.item) : []
+  new_item.forEach(o => {
     item_id[o.id] = o
     item_name[o.name] = o
   })
@@ -831,44 +1001,31 @@ function main({text, output, product, history, intent}) {
   if (!!output) {
     Array.from(output).forEach(o => by_name[o.product_name] = o)
   }
-  let answer = ''
-  let new_item = Array.isArray(history?.item) ? Array.from(history.item) : []
+  let product = getProduct(new_item)
+  let dify = ''
+  let is_finish = false
+  let is_error = false
   if (new_item.length === 0) {
-    answer += '目前没有订单可以修改产品，您可以重新点餐或者提问。\n'
+    dify = '抱歉，目前沒有訂單可以修改產品，您可以重新點餐或提問。'
+    is_error = true
   }
   else {
-    product.forEach(edit => {
-      let source = null
-      if (!!item_name[edit.source_name]) {
-        source = item_name[edit.source_name]
-      }
-      else if (!!by_name[edit.source_name]) {
-        source = by_name[edit.source_name]
-        if (!!item_id[source.id]) {
-          source = item_id[source.id]
-        }
-      }
-      let target = null
-      if (!!item_name[edit.target_name]) {
-        target = item_name[edit.target_name]
-      }
-      else if (!!by_name[edit.target_name]) {
-        target = by_name[edit.target_name]
-        if (!!item_id[target.id]) {
-          target = item_id[target.id]
-        }
-      }
+    for (const edit of items) {
+      let source = getObj(item_name, by_name, item_id, edit.source_name)
+      let target = getObj(item_name, by_name, item_id, edit.target_name)
       if (!source?.size_option) {
-        answer += `目前订单中不存在${edit.source_name}这一产品，请确认。\n`
+        dify = `抱歉，目前訂單中不存在${edit.source_name}這一產品，請確認。`
+        is_error = true
+        break
       }
       const source_name = source?.name
       const target_name = target?.name
       const source_size = normalizeSize(edit.source_size)
-      const source_temp = normalizeTemperature(edit.source_temp)
+      const source_temp = normalizeTemp(edit.source_temp)
       const target_size = normalizeSize(edit.target_size)
-      const target_temp = normalizeTemperature(edit.target_temp)
-      const source_qty = Number.isNaN(Number(edit.source_qty)) || edit.source_qty === null ? null : Number(edit.source_qty)
-      const target_qty = Number.isNaN(Number(edit.target_qty)) || edit.target_qty === null ? null : Number(edit.target_qty)
+      const target_temp = normalizeTemp(edit.target_temp)
+      const source_qty = getQty(edit.source_qty)
+      const target_qty = getQty(edit.source_qty)
       const source_size_option = source?.size_option
       const source_temp_option = source?.temp_option
       if (intent === 'update_spec') {
@@ -876,10 +1033,14 @@ function main({text, output, product, history, intent}) {
           && (!source_size || source_size === o.size || (source_size_option.length === 1 && source_size === source_size_option[0]))
           && (!source_temp || source_temp === o.temp || (source_temp_option.length === 1 && source_temp === source_temp_option[0])))
         if (spec_item.length > 1) {
-          answer += `目前订单中存在多款${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}这一产品，请确认。\n`
+          dify = `抱歉，目前訂單中存在多款${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}這一產品，請確認。`
+          is_error = true
+          break
         }
         else if (spec_item.length === 0) {
-          answer += `目前订单中不存在${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}这一产品，请确认。\n`
+          dify = `抱歉，目前訂單中不存在${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}這一產品，請確認。`
+          is_error = true
+          break
         }
         else {
           const qty = target_qty ?? source_qty
@@ -919,10 +1080,12 @@ function main({text, output, product, history, intent}) {
               price: spec_item[0].price,
               size,
               temp,
-              need_size: size_option.length > 1 && (!size || !size_option.includes(size)),
-              need_temp: temp_option.length > 1 && (!temp || !temp_option.includes(temp)),
             })
           }
+          if (!dify) {
+            dify = '好的，'
+          }
+          dify += `已將${!qty ? '' : `${qty >= replace_item[0].qty ? replace_item[0].qty : qty}杯`}${source_name}替換為${!!target_size ? target_size : ''}${!!target_temp ? (!!target_size ? '，' : '') + target_temp : ''}；`
         }
       }
       else if (intent === 'update_qty') {
@@ -930,10 +1093,14 @@ function main({text, output, product, history, intent}) {
           && (!source_size || source_size === o.size || (source_size_option.length === 1 && source_size === source_size_option[0]))
           && (!source_temp || source_temp === o.temp || (source_temp_option.length === 1 && source_temp === source_temp_option[0])))
         if (qty_item.length > 1) {
-          answer += `目前订单中存在多款${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}这一产品，请确认。\n`
+          dify = `抱歉，目前訂單中存在多款${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}這一產品，請確認。`
+          is_error = true
+          break
         }
         else if (qty_item.length === 0) {
-          answer += `目前订单中不存在${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}这一产品，请确认。\n`
+          dify = `抱歉，目前訂單中不存在${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}這一產品，請確認。`
+          is_error = true
+          break
         }
         else {
           new_item = new_item.map(v => {
@@ -945,28 +1112,20 @@ function main({text, output, product, history, intent}) {
             }
             return v
           })
+          if (!dify) {
+            dify = '好的，'
+          }
+          dify += `已將${source_name}改為${target_qty ?? (source_qty ?? 1)}杯；`
         }
       }
       else if (intent === 'replace_product') {
         if (!target) {
-          answer += `${edit.target_name}没有检索到相关产品，请确认。\n`
+          dify = `${edit.target_name}未檢索到相關項目，請確認。`
+          is_error = true
+          break
         }
         if (!!source && !!target) {
-          const option = !!item_name[edit.target_name] ? target.option : option_by_id[target.id] ?? {}
-          const format = {}
-          const target_size_option = []
-          const target_temp_option = []
-          Object.keys(option).forEach(o => {
-            let key = normalizeSize(o)
-            if (!!key) {
-              format[key] = option[o]
-              target_size_option.push(key)
-            } else {
-              key = normalizeTemperature(o)
-              format[key] = option[o]
-              target_temp_option.push(key)
-            }
-          })
+          const { option: format, size_option: target_size_option, temp_option: target_temp_option } = getOption(item_name[edit.target_name], option_by_id, target)
           const replace_item = new_item.filter(o => o.name === source_name
             && (!source_size || source_size === o.size || (source_size_option.length === 1 && source_size === source_size_option[0]))
             && (!source_temp || source_temp === o.temp || (source_temp_option.length === 1 && source_temp === source_temp_option[0])))
@@ -974,13 +1133,19 @@ function main({text, output, product, history, intent}) {
             && (!target_size || target_size === o.size || (target_size_option.length === 1 && target_size === target_size_option[0]))
             && (!target_temp || target_temp === o.temp || (target_temp_option.length === 1 && target_temp === target_temp_option[0])))
           if (replace_item.length > 1) {
-            answer += `目前订单中存在多款${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}这一产品，请确认。\n`
+            dify = `抱歉，目前訂單中存在多款${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}這一產品，請確認。`
+            is_error = true
+            break
           }
           else if (replace_item.length === 0) {
-            answer += `目前订单中不存在${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}这一产品，请确认。\n`
+            dify = `抱歉，目前訂單中不存在${edit.source_name}${!!source_size ? `，${source_size}`: ''}${!!source_temp ? `，${source_temp}`: ''}這一產品，請確認。`
+            is_error = true
+            break
           }
           else if (target_item.length > 1) {
-            answer += `目前订单中存在多款${edit.target_name}${!!target_size ? `，${target_size}`: ''}${!!target_temp ? `，${target_temp}`: ''}这一产品，请确认。\n`
+            dify = `抱歉，目前訂單中存在多款${edit.target_name}${!!target_size ? `，${target_size}`: ''}${!!target_temp ? `，${target_temp}`: ''}這一產品，請確認。`
+            is_error = true
+            break
           }
           else {
             const qty = target_qty
@@ -1000,8 +1165,6 @@ function main({text, output, product, history, intent}) {
                       price: target.price,
                       size,
                       temp,
-                      need_size: target_size_option.length > 1 && (!size || !target_size_option.includes(size)),
-                      need_temp: target_temp_option.length > 1 && (!temp || !target_temp_option.includes(temp)),
                     }
                   }
                   return v
@@ -1039,8 +1202,6 @@ function main({text, output, product, history, intent}) {
                   price: target.price,
                   size,
                   temp,
-                  need_size: target_size_option.length > 1 && (!size || !target_size_option.includes(size)),
-                  need_temp: target_temp_option.length > 1 && (!temp || !target_temp_option.includes(temp)),
                 })
               }
               else {
@@ -1055,32 +1216,28 @@ function main({text, output, product, history, intent}) {
                 })
               }
             }
+            if (!dify) {
+              dify = '好的，'
+            }
+            dify += `已將${!qty ? '' : `${qty >= replace_item[0].qty ? replace_item[0].qty : qty}杯`}${source_name}替換為${target_name}；`
           }
         }
       }
-    })
+    }
   }
   let new_history = {
     ...history
   }
-  if (!answer) {
-    const reply = new_item.find(o => o.need_size || o.need_temp) ?? null
+  if (!is_error) {
     new_history = {
-      reply,
       item: new_item,
     }
-    if (!!reply) {
-      answer += getReply(reply)
-    } else {
-      let total = 0, reply = ''
-      const list = new_item.map(getReply)
-      list.forEach(o => {
-        reply += o.reply
-        total += o.total
-      })
-      answer += `您已选择以下产品，总价${total}元，您可以选择结账、增改删除产品或者取消：\n`
-      answer += reply
-    }
+    product = getProduct(new_item)
+  }
+  const answer = {
+    dify,
+    is_finish,
+    product,
   }
   return {
     new_history,
