@@ -50,6 +50,9 @@ function filterProduct(history, product) {
   })
   return product_name
 }
+function formatOperations() {
+
+}
 function main({text, history}) {
   const obj = handleLLM(text)
   const operation = Array.isArray(obj.operation) ? Array.from(obj.operation) : (!isNull(obj?.operation?.op_type) ? [obj.operation] : [])
