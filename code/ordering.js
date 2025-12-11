@@ -1547,3 +1547,20 @@ function main({text, output, items, history, intent}) {
 }
 
 //#endregion
+
+//#region 处理检索
+
+function main({result}) {
+  const chunk = []
+  Array.from(result).forEach(o => {
+    const content = o?.metadata?.child_chunks?.[0]?.content ?? ''
+    if (content.startsWith('name:')) {
+      chunk.push(content)
+    }
+  })
+  return {
+    chunk,
+  }
+}
+
+//#endregion

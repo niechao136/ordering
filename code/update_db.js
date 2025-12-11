@@ -78,29 +78,10 @@ function toMarkdownTable(arr) {
 
   return [headerRow, separator, ...rows].join('\n')
 }
-function main({json, json_o}) {
+function main({json}) {
   const list = json[0].records
-  const list_o = json_o[0].records
-  const option_by_id = {}
-  list_o.forEach(o => {
-    if (!option_by_id[o.product_id]) {
-      option_by_id[o.product_id] = {
-        size_option: {},
-        temp_option: {},
-      }
-    }
-    if (String(o.name).endsWith('杯')) {
-      option_by_id[o.product_id].size_option[o.name] = 1
-    } else {
-      option_by_id[o.product_id].temp_option[o.name] = 1
-    }
-  })
   const product = list.map(o => {
     const obj = {}
-    if (!!option_by_id[o.id]) {
-      obj.size_option = Object.keys(option_by_id[o.id].size_option).join('、')
-      obj.temp_option = Object.keys(option_by_id[o.id].temp_option).join('、')
-    }
     Object.keys(o).forEach(k => {
       obj[k] = String(o[k])
         .replaceAll(';', '；')
