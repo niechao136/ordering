@@ -1564,3 +1564,35 @@ function main({result}) {
 }
 
 //#endregion
+
+
+function handleLLM(text) {
+  const regex = /```json([\s\S]*?)```/;
+  const _res = text.replaceAll(/<think>[\s\S]*?<\/think>/g, '');
+  const match = _res.match(regex);
+  const res = match ? match[1].trim() : _res;
+
+  // 更安全的注释移除，不会误删 URL 与字符串内容
+  const str = res
+    .replace(/\/\/(?!\s*http)[^\n]*/g, '')       // 去掉行注释，但保留 https://
+    .replace(/\/\*[\s\S]*?\*\//g, '');           // 块注释
+
+  let obj;
+  try {
+    obj = JSON.parse(str);
+  } catch (e) {
+    obj = {};
+  }
+  return obj;
+}
+function main({text}) {
+  const obj = handleLLM(text)
+  const behavior = Array.isArray(obj?.behavior) ? Array.from(obj.behavior)
+    : (!!obj?.behavior?.raw_text ? [obj?.behavior] : [])
+  const product = ['update_spec', 'update_qty', 'replace_product', 'add', 'delete']
+  const list = behavior.filter(o => product.includes(o?.intent) && !!o?.raw_text).map(o => String(o.raw_text))
+
+  return {
+    list,
+  }
+}
