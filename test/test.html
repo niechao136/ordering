@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Dify 文件上传测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+
+        input, button {
+            margin: 10px 0;
+        }
+
+        pre {
+            background: #f4f4f4;
+            padding: 10px;
+            max-height: 400px;
+            overflow: auto;
+        }
+    </style>
+</head>
+<body>
+<h1>Dify 文件上传测试</h1>
+
+<input id="fileInput" type="file"/>
+<br/>
+<button id="uploadBtn">上传文件</button>
+<button id="updateBtn">更新文档</button>
+
+<h2>返回结果：</h2>
+<pre id="result"></pre>
+
+<script>
+  const uploadBtn = document.getElementById('uploadBtn');
+  const updateBtn = document.getElementById('updateBtn');
+  const fileInput = document.getElementById('fileInput');
+  const resultEl = document.getElementById('result');
+
+  uploadBtn.addEventListener('click', () => {
+    if (!fileInput.files.length) {
+      alert('请选择一个文件！');
+      return;
+    }
+
+    const file = fileInput.files[0];
+
+    const formData = new FormData();
+    formData.append("data", JSON.stringify({
+      indexing_technique: "high_quality",
+      doc_form: "hierarchical_model",
+      process_rule: {
+        mode: "custom",
+        rules: {
+          pre_processing_rules: [
+            {id: "remove_extra_spaces", enabled: false},
+            {id: "remove_urls_emails", enabled: false}
+          ],
+          segmentation: {
+            delimiter: "\n",
+            max_tokens: 1024,
+            chunk_overlap: 50
+          }
+        },
+        limits: {
+          indexing_max_segmentation_tokens_length: 4000
+        }
+      }
+    }));
+    formData.append("file", file, file.name);
+
+    fetch("http://150.109.15.178/v1/datasets/1b41a226-117e-438f-868a-d518b6847f6f/document/create-by-file", {
+      method: 'POST',
+      headers: {
+        "Authorization": "Bearer dataset-HKD2YPAn0c0I3XiZRZzWiVio",
+        "User-Agent": "Apifox/1.0.0 (https://apifox.com)",
+        "Accept": "*/*",
+        "Host": "150.109.15.178",
+        "Connection": "keep-alive"
+      },
+      body: formData
+    })
+      .then(response => response.json())
+      .then(data => {
+        resultEl.textContent = JSON.stringify(data, null, 2);
+      })
+      .catch(err => {
+        resultEl.textContent = '上传出错: ' + err;
+      });
+  });
+  updateBtn.addEventListener('click', () => {
+    if (!fileInput.files.length) {
+      alert('请选择一个文件！');
+      return;
+    }
+
+    const file = fileInput.files[0];
+
+    const formData = new FormData();
+
+    formData.append("file", file, file.name);
+    formData.append("data", JSON.stringify({
+      "name": "product.csv",
+      "indexing_technique": "high_quality",
+      "doc_form": "text_model",
+      "process_rule": {
+        "mode": "custom",
+        "rules": {
+          "pre_processing_rules": [
+            {
+              "id": "remove_extra_spaces",
+              "enabled": false
+            },
+            {
+              "id": "remove_urls_emails",
+              "enabled": false
+            }
+          ], "segmentation": {"delimiter": "\n", "max_tokens": 1024, "chunk_overlap": 50}
+        }, "limits": {"indexing_max_segmentation_tokens_length": 4000}
+      },
+      "retrieval_model": {
+        "search_method": "hybrid_search",
+        "reranking_enable": false,
+        "reranking_mode": "weighted_score",
+        "reranking_model": {"reranking_provider_name": "", "reranking_model_name": ""},
+        "weights": {
+          "weight_type": "customized",
+          "keyword_setting": {"keyword_weight": 0.3},
+          "vector_setting": {
+            "vector_weight": 0.7,
+            "embedding_model_name": "quentinz/bge-large-zh-v1.5:latest",
+            "embedding_provider_name": "langgenius/ollama/ollama"
+          }
+        },
+        "top_k": 10,
+        "score_threshold_enabled": true,
+        "score_threshold": 0.28
+      },
+      "embedding_model_provider": "langgenius/ollama/ollama",
+      "embedding_model": "quentinz/bge-large-zh-v1.5:latest"
+    }));
+
+    fetch("http://172.22.132.124:8081/v1/datasets/53894890-adf7-4845-b0af-54c73c4bd5cb/documents/853f542a-6eb0-4cd0-9409-4270482e712c/update-by-file", {
+      method: 'POST',
+      headers: {
+        "Authorization": "Bearer dataset-Y4QLUTrJJLb1Lm57plIzTrQ8",
+      },
+      body: formData
+    })
+      .then(response => response.json())
+      .then(data => {
+        resultEl.textContent = JSON.stringify(data, null, 2);
+      })
+      .catch(err => {
+        resultEl.textContent = '上传出错: ' + err;
+      });
+  })
+</script>
+</body>
+</html>
