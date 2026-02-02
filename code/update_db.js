@@ -103,4 +103,13 @@ function main({json}) {
 
 //#endregion
 //#region Test
+
+function main({result, input}) {
+  const index = result?.[0]?.content?.indexOf('正确写法：') ?? -1
+  const revise = index === -1 ? input : result[0].content.slice(index + 5).trim()
+  return {
+    revise
+  }
+}
+
 //#endregion

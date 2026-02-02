@@ -1038,11 +1038,18 @@ function main({text, history}) {
 //#endregion
 
 function handleLLM(text = '') {
-  const str = text.replaceAll(/<think>[\s\S]*?<\/think>/g, '')
-  const match = str.match(/```json([\s\S]*?)```/)?.[1] ?? str
-  const json = match.replace(/\/\/(?!\s*http)[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
+  let str = text.replaceAll(/<think>[\s\S]*?<\/think>/g, '')
+  const blockMatch = str.match(/```json\s*([\s\S]*)/i)
+  let jsonPart = blockMatch ? blockMatch[1] : str
+  jsonPart = jsonPart.replace(/```[\s\S]*$/, '').trim()
+  const cleanJson = jsonPart
+    .replace(/\/\/(?!\s*http)[^\n]*/g, '') // 移除单行注释
+    .replace(/\/\*[\s\S]*?\*\//g, '')     // 移除多行注释
+    .replace(/\xA0/g, ' ')                 // 关键：修复 \xA0 空格
+    .replace(/,\s*([\]}])/g, '$1')         // 关键：修复 JSON 尾随逗号
+    .trim()
   try {
-    return JSON.parse(json)
+    return JSON.parse(cleanJson)
   } catch (e) {
     return {}
   }
@@ -1530,6 +1537,7 @@ function main({text, history, result}) {
   const { answer, intent, new_history } = handleAnswer(history, operation, product)
   return { answer, intent, new_history }
 }
+
 console.log(main({
   "text": "```json\n{\n  \"operation\": [\n    {\n      \"raw_text\": \"庄园美式改成庄园拿铁\",\n      \"op_type\": \"update\",\n      \"items\": [\n        {\n          \"name\": \"庄园美式\",\n          \"qty\": null,\n          \"spec\": [],\n          \"product\": \"莊園級美式\"\n        },\n        {\n          \"name\": \"庄园拿铁\",\n          \"qty\": null,\n          \"spec\": [],\n          \"product\": \"莊園級拿鐵\"\n        }\n      ]\n    }\n  ]\n}\n```",
   "history": {
